@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block title %}Admin Panel - Secure Portal{% endblock %}
+{% block content %}
+<div class="fade-in">
+    <div class="mb-4">
+        <h2 class="section-title">
+            <i class="bi bi-shield-fill-exclamation"></i> Admin Panel
+        </h2>
+        <p class="text-muted">Manage users and system administration</p>
+    </div>
+    <div class="glass-card">
+        <!-- User table -->
+        <h3 class="mb-4">
+            <i class="bi bi-people-fill"></i> User Management
+        </h3>
+        {% if users %}
+            <div class="table-responsive admin-table-wrapper">
+                <table class="table table-hover admin-table align-middle">
+                    <thead>
+                        <tr>
+                            <th><i class="bi bi-hash"></i> ID</th>
+                            <th><i class="bi bi-person"></i> Username</th>
+                            <th><i class="bi bi-person-fill"></i> Display Name</th>
+                            <th><i class="bi bi-shield"></i> Role</th>
+                            <th><i class="bi bi-file-text"></i> Posts</th>
+                            <th><i class="bi bi-calendar"></i> Created</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for user in users %}
+                            <tr>
+                                <td class="text-nowrap">
+                                    <span class="badge badge-primary">#{{ user.id }}</span>
+                                </td>
+                                <td class="text-nowrap">
+                                    <span class="username">
+                                        {{ user.username }}
+                                    </span>
+                                </td>
+                                <td class="text-nowrap">{{ user.display_name }}</td>
+                                <td class="text-nowrap">
+                                    {% if user.role == "ADMIN" %}
+                                        <span class="badge badge-admin">
+                                            <i class="bi bi-star-fill"></i> {{ user.role }}
+                                        </span>
+                                    {% else %}
+                                        <span class="badge badge-user">
+                                            <i class="bi bi-person-circle"></i> {{ user.role }}
+                                        </span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-nowrap">
+                                    <span class="count-text">{{ user.posts }}</span>
+                                </td>
+                                <td class="text-nowrap">
+                                    <span class="date-text">
+                                        {{ user.created_at[:10] }}
+                                    </span>
+                                </td>
+                                <td class="text-nowrap">
+                                    <form method="POST"
+                                          action="{{ url_for('auth.admin_delete_user', user_id=user.id) }}"
+                                          class="inline-form">
+                                        {% if user.id != current_user.id %}
+                                            <button class="btn btn-danger btn-sm"
+                                                    onclick="return confirm('Delete user {{ user.username }}? This action cannot be undone.')">
+                                                <i class="bi bi-trash"></i> Delete
+                                            </button>
+                                        {% else %}
+                                            <button class="btn btn-secondary btn-sm" disabled>
+                                                <i class="bi bi-lock"></i> Self
+                                            </button>
+                                        {% endif %}
+                                    </form>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <div class="panel-divider">
+                <small class="text-muted">
+                    <i class="bi bi-info-circle"></i> Total Users: <strong>{{ users|length }}</strong>
+                </small>
+            </div>
+        {% else %}
+            <div class="text-center py-5">
+                <i class="bi bi-people empty-icon"></i>
+                <p class="text-muted mt-3">No users found</p>
+            </div>
+        {% endif %}
+    </div>
+    <!-- Admin Stats -->
+    <div class="row g-4 mt-2">
+        <div class="col-md-4">
+            <div class="stat-card">
+                <i class="bi bi-people-fill stat-card-icon icon-primary"></i>
+                <div class="stat-card-title">Total Users</div>
+                <div class="stat-card-value">{{ users|length }}</div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="stat-card">
+                <i class="bi bi-shield-fill-exclamation stat-card-icon icon-warning"></i>
+                <div class="stat-card-title">Admins</div>
+                <div class="stat-card-value">{{ users|selectattr('role', 'equalto', 'ADMIN')|list|length }}</div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="stat-card">
+                <i class="bi bi-file-earmark-text stat-card-icon icon-secondary"></i>
+                <div class="stat-card-title">Total Posts</div>
+                <div class="stat-card-value">{{ users|map(attribute='posts')|sum }}</div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

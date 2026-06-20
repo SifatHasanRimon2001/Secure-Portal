@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}Audit Logs - Secure Portal{% endblock %}
+{% block content %}
+<div class="fade-in">
+    <div class="mb-4">
+        <h2 class="section-title">
+            <i class="bi bi-file-earmark-text"></i> Audit Logs
+        </h2>
+        <p class="text-muted">System activity and security logs</p>
+    </div>
+    <div class="glass-card">
+        {% if logs %}
+            <!-- Audit event table -->
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th><i class="bi bi-lightning"></i> Action</th>
+                            <th><i class="bi bi-person"></i> Actor</th>
+                            <th><i class="bi bi-target"></i> Target</th>
+                            <th><i class="bi bi-clock"></i> Timestamp</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for log in logs %}
+                            <tr>
+                                <td>
+                                    {% if log.action == "LOGIN" %}
+                                        <span class="badge badge-action-login">
+                                            <i class="bi bi-box-arrow-in-right"></i> LOGIN
+                                        </span>
+                                    {% elif log.action == "LOGOUT" %}
+                                        <span class="badge badge-action-logout">
+                                            <i class="bi bi-box-arrow-right"></i> LOGOUT
+                                        </span>
+                                    {% elif log.action == "REGISTER" %}
+                                        <span class="badge badge-action-register">
+                                            <i class="bi bi-person-plus"></i> REGISTER
+                                        </span>
+                                    {% elif log.action == "CREATE_POST" %}
+                                        <span class="badge badge-action-post">
+                                            <i class="bi bi-pencil-square"></i> CREATE_POST
+                                        </span>
+                                    {% elif log.action == "DELETE_USER" %}
+                                        <span class="badge badge-danger">
+                                            <i class="bi bi-trash"></i> DELETE_USER
+                                        </span>
+                                    {% elif log.action == "DELETE_POST" %}
+                                        <span class="badge badge-danger">
+                                            <i class="bi bi-trash"></i> DELETE_POST
+                                        </span>
+                                    {% elif log.action == "ADMIN_CREATED" %}
+                                        <span class="badge badge-admin">
+                                            <i class="bi bi-star"></i> ADMIN_CREATED
+                                        </span>
+                                    {% else %}
+                                        <span class="badge badge-action-info">
+                                            <i class="bi bi-info-circle"></i> {{ log.action }}
+                                        </span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <strong>{{ log.actor }}</strong>
+                                </td>
+                                <td>
+                                    <code class="inline-code">{{ log.target }}</code>
+                                </td>
+                                <td>
+                                    <small class="text-muted">{{ log.timestamp }}</small>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <div class="panel-divider">
+                <small class="text-muted">
+                    <i class="bi bi-info-circle"></i> Total Log Entries: <strong>{{ logs|length }}</strong>
+                </small>
+            </div>
+        {% else %}
+            <div class="text-center py-5">
+                <i class="bi bi-file-earmark-text empty-icon"></i>
+                <p class="text-muted mt-3">No audit logs found</p>
+            </div>
+        {% endif %}
+    </div>
+    <!-- Activity Stats -->
+    <div class="row g-4 mt-4">
+        <div class="col-md-3">
+            <div class="stat-card">
+                <i class="bi bi-graph-up stat-card-icon icon-success"></i>
+                <div class="stat-card-title">Total Events</div>
+                <div class="stat-card-value">{{ logs|length }}</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card">
+                <i class="bi bi-person-check stat-card-icon icon-info"></i>
+                <div class="stat-card-title">Logins</div>
+                <div class="stat-card-value">{{ logs|selectattr('action', 'equalto', 'LOGIN')|list|length }}</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card">
+                <i class="bi bi-pencil-square stat-card-icon icon-primary"></i>
+                <div class="stat-card-title">Posts Created</div>
+                <div class="stat-card-value">{{ logs|selectattr('action', 'equalto', 'CREATE_POST')|list|length }}</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-card">
+                <i class="bi bi-exclamation-circle stat-card-icon icon-danger"></i>
+                <div class="stat-card-title">Deletions</div>
+                <div class="stat-card-value">{{ logs|selectattr('action', 'equalto', 'DELETE_USER')|list|length }}</div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

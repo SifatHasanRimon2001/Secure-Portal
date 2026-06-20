@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - Secure Portal{% endblock %}
+{% block content %}
+<div class="fade-in">
+    <!-- Welcome Section -->
+    <div class="mb-4">
+        <div class="user-info-card">
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <div>
+                    <h2 class="section-title mb-1">Welcome, {{ display_name }}!</h2>
+                    <p class="text-muted">Your encrypted portal is ready</p>
+                </div>
+                <div>
+                    <span class="badge badge-admin">
+                        <i class="bi bi-person-fill"></i> {{ role }}
+                    </span>
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- Main Content -->
+    <div class="row g-4">
+        <!-- Post creation form -->
+        <div class="col-lg-5">
+            <div class="glass-card">
+                <h3 class="mb-3">
+                    <i class="bi bi-pencil-square text-success"></i> Create Secure Post
+                </h3>
+                <p class="text-muted mb-3">Write your encrypted message below</p>
+                <form method="POST" novalidate>
+                    {{ form.hidden_tag() }}
+                    <div class="form-group">
+                        {{ form.content.label(class="form-label") }}
+                        {% if form.content.errors %}
+                            {{ form.content(class="form-control is-invalid", rows="8") }}
+                            <div class="invalid-feedback d-block">
+                                {% for error in form.content.errors %}
+                                    <i class="bi bi-exclamation-circle"></i> {{ error }}<br>
+                                {% endfor %}
+                            </div>
+                        {% else %}
+                            {{ form.content(class="form-control", rows="8", placeholder="Type your secure message here...") }}
+                        {% endif %}
+                    </div>
+                    <small class="text-muted d-block mb-3">
+                        <i class="bi bi-shield-check"></i> Max 5000 characters • Fully encrypted
+                    </small>
+                    {{ form.submit(class="btn btn-success w-100") }}
+                </form>
+            </div>
+        </div>
+        <!-- Posts display -->
+        <div class="col-lg-7">
+            <div class="glass-card">
+                <!-- Header -->
+                <div class="posts-topbar">
+                    <div>
+                        <h3 class="mb-1">
+                            <i class="bi bi-shield-lock-fill text-primary"></i>
+                            Your Encrypted Posts
+                        </h3>
+                        <small class="text-muted">
+                            Securely stored and encrypted messages
+                        </small>
+                    </div>
+                    <div class="posts-count">
+                        {{ posts|length }}
+                        <span>Posts</span>
+                    </div>
+                </div>
+                {% if posts %}
+                <div class="posts-container">
+                    {% for post in posts %}
+                    <div class="secure-post">
+                        <div class="post-header">
+                            <div>
+                                <div class="post-id">
+                                    <i class="bi bi-hash"></i>
+                                    Post #{{ post.serial_number }}
+                                </div>
+                                <div class="post-meta">
+                                    <span>
+                                        <i class="bi bi-calendar3"></i>
+                                        {{ post.created_at.strftime('%d %b %Y %H:%M:%S') if post.created_at else 'Today' }}
+                                    </span>
+                                    <span>
+                                        <i class="bi bi-key-fill"></i>
+                                        AES-256
+                                    </span>
+                                    <span class="status-secure">
+                                        <span class="status-dot"></span>
+                                        Secured
+                                    </span>
+                                </div>
+                            </div>
+                            <div class="post-actions">
+                                <button
+                                    type="button"
+                                    class="btn btn-sm btn-copy js-copy"
+                                    data-copy-content="{{ post.content|e }}"
+                                    title="Copy post content"
+                                    aria-label="Copy post content"
+                                >
+                                    <i class="bi bi-clipboard" aria-hidden="true"></i>
+                                </button>
+                                <form
+                                    method="POST"
+                                    action="{{ url_for('auth.delete_post', post_id=post.id) }}"
+                                    class="inline-form"
+                                >
+                                    <button
+                                        type="submit"
+                                        class="btn btn-sm btn-danger"
+                                        onclick="return confirm('Delete Post #{{ post.serial_number }}? This action cannot be undone.')"
+                                    >
+                                        <i class="bi bi-trash" aria-hidden="true"></i>
+                                        Delete
+                                    </button>
+                                </form>
+                                <span class="encrypted-badge">
+                                    <i class="bi bi-lock-fill" aria-hidden="true"></i>
+                                    Encrypted
+                                </span>
+                            </div>
+                        </div>
+                        <div class="post-content">
+                            <p>{{ post.content }}</p>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="empty-state">
+                    <div class="empty-icon">
+                        <i class="bi bi-shield-x"></i>
+                    </div>
+                    <h5>No Secure Posts</h5>
+                    <p>
+                        Your encrypted vault is empty.<br>
+                        Create your first protected message.
+                    </p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    <!-- Info Section -->
+    <div class="row g-4 mt-2">
+        <div class="col-md-4">
+            <div class="info-card">
+                <i class="bi bi-shield-check info-card-icon icon-success"></i>
+                <h5 class="info-card-title">End-to-End Encryption</h5>
+                <p class="info-card-description">All your data is encrypted with AES-256</p>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="info-card">
+                <i class="bi bi-lock-fill info-card-icon icon-primary"></i>
+                <h5 class="info-card-title">Password Hashed</h5>
+                <p class="info-card-description">Passwords secured with scrypt hashing</p>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="info-card">
+                <i class="bi bi-file-earmark-check info-card-icon icon-secondary"></i>
+                <h5 class="info-card-title">Integrity Verified</h5>
+                <p class="info-card-description">All data verified with MAC</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

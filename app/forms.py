@@ -1,5 +1,5 @@
-from flask_wtf import FlaskForm
 from wtforms import (
+    Form,
     StringField,
     PasswordField,
     TextAreaField,
@@ -11,7 +11,20 @@ from wtforms.validators import (
     EqualTo,
     Regexp
 )
-class RegisterForm(FlaskForm):
+
+
+class BaseForm(Form):
+    """Base form that provides ``hidden_tag()`` (removed in WTForms 3.x).
+
+    Templates inherited from Flask-WTF expect this method to exist, so we
+    restore it here as a no-op since CSRF is handled by the session middleware.
+    """
+
+    def hidden_tag(self):
+        return ""
+
+
+class RegisterForm(BaseForm):
     username = StringField(
         "Username",
         validators=[
@@ -59,26 +72,22 @@ class RegisterForm(FlaskForm):
             )
         ]
     )
-    submit = SubmitField(
-        "Create Account"
-    )
-class LoginForm(FlaskForm):
+    submit = SubmitField("Create Account")
+
+
+class LoginForm(BaseForm):
     username = StringField(
         "Username",
-        validators=[
-            DataRequired()
-        ]
+        validators=[DataRequired()]
     )
     password = PasswordField(
         "Password",
-        validators=[
-            DataRequired()
-        ]
+        validators=[DataRequired()]
     )
-    submit = SubmitField(
-        "Login"
-    )
-class PostForm(FlaskForm):
+    submit = SubmitField("Login")
+
+
+class PostForm(BaseForm):
     content = TextAreaField(
         "Secure Message",
         validators=[
@@ -86,16 +95,12 @@ class PostForm(FlaskForm):
             Length(max=5000)
         ]
     )
-    submit = SubmitField(
-        "Encrypt & Save"
-    )
-class CredentialCheckForm(FlaskForm):
+    submit = SubmitField("Encrypt & Save")
+
+
+class CredentialCheckForm(BaseForm):
     password = PasswordField(
         "Password",
-        validators=[
-            DataRequired()
-        ]
+        validators=[DataRequired()]
     )
-    submit = SubmitField(
-        "Verify"
-    )
+    submit = SubmitField("Verify")

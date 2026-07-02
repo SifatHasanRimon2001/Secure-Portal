@@ -1,433 +1,490 @@
-from flask import (
-    Blueprint,
-    render_template,
-    redirect,
-    url_for,
-    flash,
-    request
-)
-from flask_login import (
-    login_user,
-    logout_user,
-    login_required,
-    current_user
-)
 from datetime import datetime
-from . import db
-from .models import (
-    User,
-    SecurePost
-)
+
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
+from fastapi.responses import RedirectResponse
+from fastapi.templating import Jinja2Templates
+
+from .database import db
+from .decorators import get_current_user, require_admin, require_user
 from .forms import (
-    RegisterForm,
+    CredentialCheckForm,
     LoginForm,
     PostForm,
-    CredentialCheckForm
+    RegisterForm,
 )
-from .decorators import (
-    admin_required
-)
+from .models import AuditLog, SecurePost, User
 from .services import (
+    create_audit_log,
+    decrypt_post_for_user,
+    delete_user,
+    encrypt_post_for_user,
+    format_timestamp,
+    get_all_users,
+    get_audit_logs,
+    get_created_at,
+    get_display_name,
+    get_next_post_serial_number,
+    get_username,
+    get_user_role,
     register_user,
+    username_lookup,
     verify_credentials,
     verify_user_integrity,
-    username_lookup,
-    get_username,
-    get_display_name,
-    get_created_at,
-    format_timestamp,
-    get_user_role,
-    get_next_post_serial_number,
-    encrypt_post_for_user,
-    decrypt_post_for_user,
-    create_audit_log,
-    delete_user,
-    get_all_users,
-    get_audit_logs
 )
-auth_bp = Blueprint(
-    "auth",
-    __name__
-)
-def get_base_context():
-    """Get base context for all templates with user role."""
-    context = {}
-    if current_user.is_authenticated:
+
+router = APIRouter()
+
+# -- Template helpers ---------------------------------------------------------
+
+_templates: Jinja2Templates | None = None
+
+
+def _get_templates() -> Jinja2Templates:
+    global _templates
+    if _templates is None:
+        from fastapi import FastAPI
+        raise RuntimeError("Templates not initialised – call init_templates(app)")
+    return _templates
+
+
+def init_templates(app: "FastAPI") -> None:
+    global _templates
+    _templates = app.state.templates
+
+
+def _flash(request: Request, message: str, category: str = "info") -> None:
+    """Store a flash message in the session."""
+    flashes = request.session.get("_flashes", [])
+    flashes.append({"category": category, "message": message})
+    request.session["_flashes"] = flashes
+
+
+def _build_context(
+    request: Request,
+    current_user: User | None,
+    **extra,
+) -> dict:
+    """Build the full template context.
+
+    Exposes everything the existing templates expect:
+    ``request``, ``url_for``, ``get_flashed_messages``,
+    ``current_user``, and ``user_role``.
+    """
+    # Consume any queued flash messages
+    flashes = request.session.pop("_flashes", [])
+
+    def get_flashed_messages(with_categories=False):
+        if with_categories:
+            return [(f["category"], f["message"]) for f in flashes]
+        return [f["message"] for f in flashes]
+
+    def url_for(name: str, **params: str) -> str:
+        """Template-friendly URL generator (handles Flask-style ``filename`` for static files)."""
+        if name == "static":
+            # StaticFiles mounts use ``path`` internally, but templates pass ``filename``
+            return f"/static/{params.get('filename', '')}"
+        return str(request.url_for(name, **params))
+
+    context = {
+        "request": request,
+        "url_for": url_for,
+        "get_flashed_messages": get_flashed_messages,
+        "current_user": current_user,
+    }
+
+    if current_user and current_user.is_authenticated:
         try:
-            context['user_role'] = get_user_role(current_user)
-        except:
-            context['user_role'] = 'USER'
+            context["user_role"] = get_user_role(current_user)
+        except Exception:
+            context["user_role"] = "USER"
     else:
-        context['user_role'] = None
+        context["user_role"] = None
+
+    context.update(extra)
     return context
+
+
+def _make_form_from_request(form_class, form_data):
+    """Instantiate a WTForms Form from Starlette ``FormData``."""
+    # WTForms accepts a dict-like object as the first positional arg (formdata)
+    return form_class(formdata=form_data)
+
+
 # =====================================================
 # HOME
 # =====================================================
-@auth_bp.route("/")
-def index():
-    if current_user.is_authenticated:
-        return redirect(
-            url_for("auth.dashboard")
-        )
-    return redirect(
-        url_for("auth.login")
-    )
+@router.get("/", name="auth.index")
+async def index(request: Request):
+    user = await get_current_user(request)
+    if user and user.is_authenticated:
+        return RedirectResponse(url=request.url_for("auth.dashboard"), status_code=302)
+    return RedirectResponse(url=request.url_for("auth.login"), status_code=302)
+
+
 # =====================================================
 # REGISTER
 # =====================================================
-@auth_bp.route(
-    "/register",
-    methods=["GET", "POST"]
-)
-def register():
+@router.get("/register", name="auth.register")
+async def register_get(request: Request):
+    user = await get_current_user(request)
     form = RegisterForm()
-    if form.validate_on_submit():
+    templates = _get_templates()
+    return templates.TemplateResponse(
+        "register.html",
+        _build_context(request, user, form=form),
+    )
+
+
+@router.post("/register", name="auth.register_post")
+async def register_post(request: Request):
+    user = await get_current_user(request)
+    form_data = await request.form()
+    form = _make_form_from_request(RegisterForm, form_data)
+    templates = _get_templates()
+
+    if form.validate():
         username = form.username.data
         display_name = form.display_name.data
         password = form.password.data
-        user = register_user(
-            username,
-            display_name,
-            password
-        )
-        if not user:
-            flash(
-                "Username already exists.",
-                "danger"
-            )
-            return render_template(
+
+        new_user = register_user(username, display_name, password)
+
+        if not new_user:
+            _flash(request, "Username already exists.", "danger")
+            return templates.TemplateResponse(
                 "register.html",
-                form=form,
-                **get_base_context()
+                _build_context(request, user, form=form),
             )
-        flash(
-            "Account created successfully! Please log in.",
-            "success"
+
+        _flash(request, "Account created successfully! Please log in.", "success")
+        return RedirectResponse(
+            url=request.url_for("auth.login"), status_code=302
         )
-        return redirect(
-            url_for("auth.login")
-        )
-    return render_template(
+
+    return templates.TemplateResponse(
         "register.html",
-        form=form,
-        **get_base_context()
+        _build_context(request, user, form=form),
     )
+
+
 # =====================================================
 # LOGIN
 # =====================================================
-@auth_bp.route(
-    "/login",
-    methods=["GET", "POST"]
-)
-def login():
+@router.get("/login", name="auth.login")
+async def login_get(request: Request):
+    user = await get_current_user(request)
+    if user and user.is_authenticated:
+        return RedirectResponse(url=request.url_for("auth.dashboard"), status_code=302)
     form = LoginForm()
-    if form.validate_on_submit():
+    templates = _get_templates()
+    return templates.TemplateResponse(
+        "login.html",
+        _build_context(request, user, form=form),
+    )
+
+
+@router.post("/login", name="auth.login_post")
+async def login_post(request: Request):
+    user = await get_current_user(request)
+    form_data = await request.form()
+    form = _make_form_from_request(LoginForm, form_data)
+    templates = _get_templates()
+
+    if form.validate():
         username = form.username.data
         password = form.password.data
-        user = User.query.filter_by(
-            username_lookup=username_lookup(
-                username
-            )
+
+        user_obj = User.query.filter_by(
+            username_lookup=username_lookup(username)
         ).first()
-        if not user:
-            flash(
-                "Invalid credentials.",
-                "danger"
-            )
-            return render_template(
+
+        if not user_obj:
+            _flash(request, "Invalid credentials.", "danger")
+            return templates.TemplateResponse(
                 "login.html",
-                form=form,
-                **get_base_context()
+                _build_context(request, user, form=form),
             )
-        if not verify_user_integrity(
-            user
-        ):
-            flash(
-                "Account integrity failure.",
-                "danger"
-            )
-            return render_template(
+
+        if not verify_user_integrity(user_obj):
+            _flash(request, "Account integrity failure.", "danger")
+            return templates.TemplateResponse(
                 "login.html",
-                form=form,
-                **get_base_context()
+                _build_context(request, user, form=form),
             )
-        if not verify_credentials(
-            user,
-            password
-        ):
-            flash(
-                "Invalid credentials.",
-                "danger"
-            )
-            return render_template(
+
+        if not verify_credentials(user_obj, password):
+            _flash(request, "Invalid credentials.", "danger")
+            return templates.TemplateResponse(
                 "login.html",
-                form=form,
-                **get_base_context()
+                _build_context(request, user, form=form),
             )
-        login_user(user)
+
+        # Store user in session
+        request.session["user_id"] = str(user_obj.id)
+
         create_audit_log(
             "LOGIN",
-            get_username(user),
-            get_username(user)
+            get_username(user_obj),
+            get_username(user_obj),
         )
-        flash(
-            "Login successful!",
-            "success"
+
+        _flash(request, "Login successful!", "success")
+        return RedirectResponse(
+            url=request.url_for("auth.dashboard"), status_code=302
         )
-        return redirect(
-            url_for("auth.dashboard")
-        )
-    return render_template(
+
+    return templates.TemplateResponse(
         "login.html",
-        form=form,
-        **get_base_context()
+        _build_context(request, user, form=form),
     )
+
+
 # =====================================================
 # LOGOUT
 # =====================================================
-@auth_bp.route("/logout")
-@login_required
-def logout():
+@router.get("/logout", name="auth.logout")
+async def logout(request: Request, current_user: User = Depends(require_user)):
     create_audit_log(
         "LOGOUT",
         get_username(current_user),
-        get_username(current_user)
+        get_username(current_user),
     )
-    logout_user()
-    flash(
-        "You have been logged out.",
-        "info"
-    )
-    return redirect(
-        url_for("auth.login")
-    )
+    request.session.pop("user_id", None)
+    _flash(request, "You have been logged out.", "info")
+    return RedirectResponse(url=request.url_for("auth.login"), status_code=302)
+
+
 # =====================================================
 # DASHBOARD
 # =====================================================
-@auth_bp.route(
-    "/dashboard",
-    methods=["GET", "POST"]
-)
-@login_required
-def dashboard():
-    if not verify_user_integrity(
-        current_user
-    ):
-        flash(
-            "Integrity check failed.",
-            "danger"
-        )
-        logout_user()
-        return redirect(
-            url_for("auth.login")
-        )
+@router.get("/dashboard", name="auth.dashboard")
+async def dashboard_get(request: Request, current_user: User = Depends(require_user)):
+    if not verify_user_integrity(current_user):
+        _flash(request, "Integrity check failed.", "danger")
+        request.session.pop("user_id", None)
+        return RedirectResponse(url=request.url_for("auth.login"), status_code=302)
+
     form = PostForm()
-    if form.validate_on_submit():
-        content = form.content.data.strip()
-        ciphertext, mac = encrypt_post_for_user(
-            current_user,
-            content
-        )
-        serial_number = get_next_post_serial_number(
-            current_user
-        )
-        post = SecurePost(
-            user_id=current_user.id,
-            serial_number=serial_number,
-            created_at=datetime.utcnow(),
-            ciphertext=ciphertext,
-            mac=mac
-        )
-        db.session.add(post)
-        db.session.commit()
-        create_audit_log(
-            "CREATE_POST",
-            get_username(current_user),
-            str(post.id)
-        )
-        flash(
-            "Encrypted post saved successfully!",
-            "success"
-        )
-        return redirect(
-            url_for("auth.dashboard")
-        )
+    templates = _get_templates()
+
     raw_posts = SecurePost.query.filter_by(
         user_id=current_user.id
     ).order_by(SecurePost.id.asc()).all()
+
     posts = []
     for post in raw_posts:
         posts.append({
             "id": post.id,
             "serial_number": post.serial_number,
             "created_at": post.created_at,
-            "content":
-                decrypt_post_for_user(
-                    current_user,
-                    post
-                )
+            "content": decrypt_post_for_user(current_user, post),
         })
     posts.reverse()
-    context = get_base_context()
-    context.update({
-        "username": get_username(current_user),
-        "display_name": get_display_name(current_user),
-        "role": get_user_role(current_user),
-        "form": form,
-        "posts": posts
-    })
-    return render_template(
+
+    return templates.TemplateResponse(
         "dashboard.html",
-        **context
+        _build_context(request, current_user, **{
+            "username": get_username(current_user),
+            "display_name": get_display_name(current_user),
+            "role": get_user_role(current_user),
+            "form": form,
+            "posts": posts,
+        }),
     )
+
+
+@router.post("/dashboard", name="auth.dashboard_post")
+async def dashboard_post(request: Request, current_user: User = Depends(require_user)):
+    if not verify_user_integrity(current_user):
+        _flash(request, "Integrity check failed.", "danger")
+        request.session.pop("user_id", None)
+        return RedirectResponse(url=request.url_for("auth.login"), status_code=302)
+
+    form_data = await request.form()
+    form = _make_form_from_request(PostForm, form_data)
+    templates = _get_templates()
+
+    if form.validate():
+        content = form.content.data.strip()
+        ciphertext, mac = encrypt_post_for_user(current_user, content)
+        serial_number = get_next_post_serial_number(current_user)
+
+        post = SecurePost(
+            user_id=current_user.id,
+            serial_number=serial_number,
+            created_at=datetime.utcnow(),
+            ciphertext=ciphertext,
+            mac=mac,
+        )
+        db.session.add(post)
+        db.session.commit()
+
+        create_audit_log(
+            "CREATE_POST",
+            get_username(current_user),
+            str(post.id),
+        )
+
+        _flash(request, "Encrypted post saved successfully!", "success")
+        return RedirectResponse(
+            url=request.url_for("auth.dashboard"), status_code=302
+        )
+
+    # Validation failed – re-render with existing posts
+    raw_posts = SecurePost.query.filter_by(
+        user_id=current_user.id
+    ).order_by(SecurePost.id.asc()).all()
+
+    posts = []
+    for post in raw_posts:
+        posts.append({
+            "id": post.id,
+            "serial_number": post.serial_number,
+            "created_at": post.created_at,
+            "content": decrypt_post_for_user(current_user, post),
+        })
+    posts.reverse()
+
+    return templates.TemplateResponse(
+        "dashboard.html",
+        _build_context(request, current_user, **{
+            "username": get_username(current_user),
+            "display_name": get_display_name(current_user),
+            "role": get_user_role(current_user),
+            "form": form,
+            "posts": posts,
+        }),
+    )
+
+
 # =====================================================
 # CREDENTIAL CHECK
 # =====================================================
-@auth_bp.route(
-    "/credentials",
-    methods=["GET", "POST"]
-)
-@login_required
-def credentials():
+@router.get("/credentials", name="auth.credentials")
+async def credentials_get(request: Request, current_user: User = Depends(require_user)):
     form = CredentialCheckForm()
-    verified = False
-    if form.validate_on_submit():
-        verified = verify_credentials(
-            current_user,
-            form.password.data
-        )
-        if verified:
-            flash(
-                "Verification successful!",
-                "success"
-            )
-        else:
-            flash(
-                "Incorrect password.",
-                "danger"
-            )
-    context = get_base_context()
-    context.update({
-        "form": form,
-        "verified": verified,
-        "username": get_username(current_user),
-        "display_name": get_display_name(current_user),
-        "role": get_user_role(current_user),
-        "created_at": format_timestamp(
-            get_created_at(current_user)
-        )
-    })
-    return render_template(
+    templates = _get_templates()
+    return templates.TemplateResponse(
         "credentials.html",
-        **context
+        _build_context(request, current_user, **{
+            "form": form,
+            "verified": False,
+            "username": get_username(current_user),
+            "display_name": get_display_name(current_user),
+            "role": get_user_role(current_user),
+            "created_at": format_timestamp(get_created_at(current_user)),
+        }),
     )
+
+
+@router.post("/credentials", name="auth.credentials_post")
+async def credentials_post(request: Request, current_user: User = Depends(require_user)):
+    form_data = await request.form()
+    form = _make_form_from_request(CredentialCheckForm, form_data)
+    templates = _get_templates()
+
+    verified = False
+    if form.validate():
+        verified = verify_credentials(current_user, form.password.data)
+        if verified:
+            _flash(request, "Verification successful!", "success")
+        else:
+            _flash(request, "Incorrect password.", "danger")
+
+    return templates.TemplateResponse(
+        "credentials.html",
+        _build_context(request, current_user, **{
+            "form": form,
+            "verified": verified,
+            "username": get_username(current_user),
+            "display_name": get_display_name(current_user),
+            "role": get_user_role(current_user),
+            "created_at": format_timestamp(get_created_at(current_user)),
+        }),
+    )
+
+
 # =====================================================
 # DELETE POST
 # =====================================================
-@auth_bp.route(
-    "/posts/delete/<int:post_id>",
-    methods=["POST"]
-)
-@login_required
-def delete_post(post_id):
-    post = db.session.get(
-        SecurePost,
-        post_id
-    )
+@router.post("/posts/delete/{post_id}", name="auth.delete_post")
+async def delete_post(
+    request: Request,
+    post_id: int,
+    current_user: User = Depends(require_user),
+):
+    post = db.session.get(SecurePost, post_id)
     if not post or post.user_id != current_user.id:
-        flash(
-            "Post not found.",
-            "danger"
+        _flash(request, "Post not found.", "danger")
+        return RedirectResponse(
+            url=request.url_for("auth.dashboard"), status_code=302
         )
-        return redirect(
-            url_for("auth.dashboard")
-        )
-    db.session.delete(
-        post
-    )
+
+    db.session.delete(post)
     db.session.commit()
+
     create_audit_log(
         "DELETE_POST",
         get_username(current_user),
-        str(post_id)
+        str(post_id),
     )
-    flash(
-        "Post deleted successfully.",
-        "success"
+
+    _flash(request, "Post deleted successfully.", "success")
+    return RedirectResponse(
+        url=request.url_for("auth.dashboard"), status_code=302
     )
-    return redirect(
-        url_for("auth.dashboard")
-    )
+
+
 # =====================================================
 # ADMIN PANEL
 # =====================================================
-@auth_bp.route("/admin")
-@login_required
-@admin_required
-def admin():
+@router.get("/admin", name="auth.admin")
+async def admin(request: Request, current_user: User = Depends(require_admin)):
     users = get_all_users()
-    context = get_base_context()
-    context.update({
-        "users": users
-    })
-    return render_template(
+    templates = _get_templates()
+    return templates.TemplateResponse(
         "admin.html",
-        **context
+        _build_context(request, current_user, users=users),
     )
+
+
 # =====================================================
 # DELETE USER
 # =====================================================
-@auth_bp.route(
-    "/admin/delete/<int:user_id>",
-    methods=["POST"]
-)
-@login_required
-@admin_required
-def admin_delete_user(user_id):
-    target = db.session.get(
-        User,
-        user_id
-    )
+@router.post("/admin/delete/{user_id}", name="auth.admin_delete_user")
+async def admin_delete_user(
+    request: Request,
+    user_id: int,
+    current_user: User = Depends(require_admin),
+):
+    target = db.session.get(User, user_id)
     if not target:
-        flash(
-            "User not found.",
-            "danger"
+        _flash(request, "User not found.", "danger")
+        return RedirectResponse(
+            url=request.url_for("auth.admin"), status_code=302
         )
-        return redirect(
-            url_for("auth.admin")
-        )
+
     if target.id == current_user.id:
-        flash(
-            "Cannot delete yourself.",
-            "danger"
+        _flash(request, "Cannot delete yourself.", "danger")
+        return RedirectResponse(
+            url=request.url_for("auth.admin"), status_code=302
         )
-        return redirect(
-            url_for("auth.admin")
-        )
-    delete_user(
-        current_user,
-        target
+
+    delete_user(current_user, target)
+    _flash(request, "User removed successfully.", "success")
+    return RedirectResponse(
+        url=request.url_for("auth.admin"), status_code=302
     )
-    flash(
-        "User removed successfully.",
-        "success"
-    )
-    return redirect(
-        url_for("auth.admin")
-    )
+
+
 # =====================================================
 # AUDIT LOGS
 # =====================================================
-@auth_bp.route("/audit-logs")
-@login_required
-@admin_required
-def audit_logs():
+@router.get("/audit-logs", name="auth.audit_logs")
+async def audit_logs(request: Request, current_user: User = Depends(require_admin)):
     logs = get_audit_logs()
-    context = get_base_context()
-    context.update({
-        "logs": logs
-    })
-    return render_template(
+    templates = _get_templates()
+    return templates.TemplateResponse(
         "audit_logs.html",
-        **context
+        _build_context(request, current_user, logs=logs),
     )

@@ -111,8 +111,7 @@
         <div class="col-md-3">
             <div class="stat-card">
                 <i class="bi bi-exclamation-circle stat-card-icon icon-danger"></i>
-                <div class="stat-card-title">Deletions</div>
-                <div class="stat-card-value">{{ logs|selectattr('action', 'equalto', 'DELETE_USER')|list|length }}</div>
+                <div class="stat-card-title">Deletions</div>                                <div class="stat-card-value">{{ logs|selectattr('action', 'in', ['DELETE_USER', 'DELETE_POST'])|list|length }}</div>
             </div>
         </div>
     </div>

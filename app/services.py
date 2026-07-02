@@ -1,6 +1,6 @@
 import os
 from datetime import datetime
-from . import db
+from .database import db
 from .models import (
     User,
     SecurePost,
